@@ -289,20 +289,15 @@ void showBatteryLow(int pct) {
 }
 
 static void drawRecordingScreen(uint32_t elapsedMs, int level) {
-  clearWhite();
-  // REC indicator (filled dot + label)
-  fillCircle(60, 32, 7, BLACK);
-  drawStr(74, 24, "REC", 2, BLACK);
-  // elapsed time, large
-  uint32_t s = elapsedMs / 1000;
-  char t[12]; snprintf(t, sizeof(t), "%u:%02u", (unsigned)(s / 60), (unsigned)(s % 60));
-  drawStrC(100, 92, t, 3, BLACK);
-  // audio level meter
-  const int barX = 22, barY = 150, barW = 156, barH = 22;
-  strokeRoundRect(barX, barY, barW, barH, 5, 1, BLACK);
-  int fill = level; if (fill < 0) fill = 0; if (fill > barW - 4) fill = barW - 4;
-  if (fill > 0) fillRoundRect(barX + 2, barY + 2, fill, barH - 4, 3, BLACK);
-  drawStrC(100, 184, "release to stop", 1, BLACK);
+  (void)elapsedMs;
+  // Original look: a solid black screen with one centered white circle...
+  fillRect(0, 0, W, H, BLACK);
+  // ...that pulses with the live mic level (level is 0..152 from record.cpp):
+  // quiet ≈ r24, loud ≈ r68.
+  int r = 24 + (level * 44) / 152;
+  if (r < 24) r = 24;
+  if (r > 68) r = 68;
+  fillCircle(W / 2, H / 2, r, WHITE);
 }
 
 void showRecording() {                         // initial frame (synchronous)
