@@ -24,18 +24,26 @@ Forrest Note is built on the original **Pala Note** firmware — full credit to 
 > Original project: **Pala Note** — <https://ko-fi.com/s/674a1a82e0>
 > Huge thanks to the Pala Note author for the original device and firmware that made this possible.
 
+### What the original Pala Note already did
+
+Credit where it's due — the original firmware already provided: voice **recording**, **Whisper transcription**, a local note-transfer web server, on-device **tags**, sleep/power management, and all the low-level **e-ink, audio (ES8311/ES7210) and codec drivers** — plus the **physical device and 3D-printable case** design.
+
 ### What this fork adds (the "Forrest Note" upgrade)
 
-Everything below is new on top of the original Pala Note firmware:
+Everything below is new or changed on top of that foundation:
 
-| Upgrade | What changed |
-|---|---|
-| 🤖 **AI note cleanup** | A `gpt-4o-mini` pass rewrites each transcript into coherent, succinct prose — removing "um", false starts, and repetition while preserving every fact, name, and number. |
-| 🧠 **AI metadata** | Auto-generated note **title**, one-line **summary** callout, and **topic backlinks** (`[[wikilinks]]`) plus auto-built tag index ("MOC") pages. |
-| 🗂️ **Original transcript preserved** | The verbatim transcript is kept in a foldable `> [!quote]- Original transcript` callout under the clean version. |
-| 📊 **Snappier level meter** | The live recording VU meter refresh rate was increased (~2 Hz → ~10 Hz) for responsive feedback. |
-| 🐛 **Chunked-HTTP fix** | The HTTPS client now decodes `Transfer-Encoding: chunked` responses — which is what makes the OpenAI chat (enrichment) calls actually work. Without it, enrichment silently fails. |
-| 🔐 **Zero secrets in code** | Wi-Fi and API keys are provisioned at runtime over a setup hotspot and stored on-device — nothing sensitive lives in this repo. |
+| Upgrade | Type | What changed |
+|---|---|---|
+| 🤖 **AI note cleanup** | ➕ New | A `gpt-4o-mini` pass rewrites each transcript into coherent, succinct prose — removing "um", false starts, and repetition while preserving every fact, name, and number. |
+| 🧠 **AI metadata** | ➕ New | Auto-generated note **title**, one-line **summary** callout, and **topic backlinks** (`[[wikilinks]]`) plus auto-built tag index ("MOC") pages. |
+| 🗂️ **Original transcript preserved** | ➕ New | The verbatim transcript is kept in a foldable `> [!quote]- Original transcript` callout under the clean version. |
+| ☁️ **GitHub → Obsidian sync** | ➕ New | Notes are pushed to your own GitHub repo as Markdown via the GitHub Contents API, ready for Obsidian. |
+| 📶 **Runtime provisioning** | ➕ New | A `ForrestNote-Setup` Wi-Fi hotspot + captive portal stores Wi-Fi and keys in on-device NVS — **replacing the original's hardcoded `secrets.h`**. |
+| 🔒 **Real TLS validation** | 🔁 Changed | HTTPS now validates against the Mozilla CA bundle — replacing the original's insecure `setInsecure()`. |
+| 🔄 **OTA updates** | ➕ New | Firmware can be updated over the air from the portal (`/ota`), backed by a dual-OTA custom partition table (`partitions.csv`). |
+| 🐛 **Chunked-HTTP fix** | ➕ New | The HTTPS client now decodes `Transfer-Encoding: chunked` responses — which is what makes the OpenAI chat (enrichment) calls actually work. Without it, enrichment silently fails. |
+| 📊 **Snappier level meter** | 🔁 Changed | The live recording VU meter refresh rate was increased (~2 Hz → ~10 Hz), plus async/coalesced e-paper refresh for responsive UI. |
+| 🔐 **Zero secrets in code** | 🔁 Changed | Wi-Fi and API keys live on-device, not in the repo. |
 
 ---
 
@@ -49,6 +57,10 @@ This firmware targets the **Pala Note ESP32-S3 device**:
 - **Storage:** microSD (SD_MMC, 1-bit)
 - **Extras:** PCF85063 RTC, SHTC3 temp/humidity sensor, LiPo battery with power latch
 - **Buttons:** Record (GPIO0 / BOOT) and Power (GPIO18)
+
+### 🧊 3D-printable case
+
+The printable enclosure (front & back housing, button, and an assembled STEP reference) is the original creator's hardware design and is **not redistributed here**. Download the case files from the original **Pala Note** project: <https://ko-fi.com/s/674a1a82e0>.
 
 ---
 
