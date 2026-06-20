@@ -21,8 +21,8 @@ Hold a button, talk, let go. A few seconds later a tidy Markdown note — with a
 
 Forrest Note is built on the original **Pala Note** firmware — full credit to its original author for the hardware bring-up, the e-ink/audio/codec drivers, the recording engine, and the device UI. This project stands entirely on that foundation.
 
-> _If you're the original Pala Note author: thank you. Add your preferred attribution link here._
-> Original project: **Pala Note** — `<add original repo/author link>`
+> Original project: **Pala Note** — <https://ko-fi.com/s/674a1a82e0>
+> Huge thanks to the Pala Note author for the original device and firmware that made this possible.
 
 ### What this fork adds (the "Forrest Note" upgrade)
 
