@@ -49,14 +49,19 @@ Everything below is new or changed on top of that foundation:
 
 ## 🧰 Hardware
 
-This firmware targets the **Pala Note ESP32-S3 device**:
+This firmware is built for the **Waveshare ESP32-S3 1.54″ e-Paper AIoT Development Board** — a single board that integrates the MCU, display, audio, storage, sensors, and battery charging:
 
-- **MCU:** ESP32-S3 **N8R8** module — 8 MB flash + 8 MB **OCTAL (OPI)** PSRAM
-- **Display:** 1.54" **200×200 e-ink**
-- **Audio:** ES8311 (speaker/DAC) + ES7210 (mic/ADC) codecs
-- **Storage:** microSD (SD_MMC, 1-bit)
-- **Extras:** PCF85063 RTC, SHTC3 temp/humidity sensor, LiPo battery with power latch
+> 🛒 **Reference board:** [Waveshare ESP32-S3 1.54inch e-Paper AIoT Dev Board](https://www.waveshare.com/esp32-s3-epaper-1.54.htm) (the **B/W**, non-"G" variant). Buy this exact board, print the original Pala Note case, flash this firmware — done.
+
+- **MCU:** ESP32-S3 (Xtensa LX7 dual-core @ 240 MHz) — **N8R8** stacked package: 8 MB flash + 8 MB **OCTAL (OPI)** PSRAM
+- **Display:** 1.54″ **200×200** e-paper (black/white)
+- **Audio:** onboard low-power audio codec + **microphone & speaker** (ES8311 / ES7210)
+- **Storage:** microSD / TF card (SD_MMC, 1-bit)
+- **Extras:** RTC chip, SHTC3 temp/humidity sensor, LiPo battery + onboard charge management
 - **Buttons:** Record (GPIO0 / BOOT) and Power (GPIO18)
+- **Wireless:** 2.4 GHz Wi-Fi + BLE 5
+
+> Note: there's also a four-colour **"1.54G"** variant — this firmware targets the **black/white** board.
 
 ### 🧊 3D-printable case
 
