@@ -288,19 +288,26 @@ void showBatteryLow(int pct) {
   refresh();
 }
 
+static float recCircleR = 24.0f;   // smoothed radius, carried across frames
+
 static void drawRecordingScreen(uint32_t elapsedMs, int level) {
   (void)elapsedMs;
   // Original look: a solid black screen with one centered white circle...
   fillRect(0, 0, W, H, BLACK);
   // ...that pulses with the live mic level (level is 0..152 from record.cpp):
   // quiet ≈ r24, loud ≈ r68.
-  int r = 24 + (level * 44) / 152;
-  if (r < 24) r = 24;
-  if (r > 68) r = 68;
-  fillCircle(W / 2, H / 2, r, WHITE);
+  float target = 24.0f + (float)level * 44.0f / 152.0f;
+  if (target < 24.0f) target = 24.0f;
+  if (target > 68.0f) target = 68.0f;
+  // Ease toward the target instead of snapping: snap up fast, fall back slowly
+  // for a natural "breathing" pulse rather than a jittery jump each frame.
+  float a = (target > recCircleR) ? 0.55f : 0.18f;
+  recCircleR += (target - recCircleR) * a;
+  fillCircle(W / 2, H / 2, (int)(recCircleR + 0.5f), WHITE);
 }
 
 void showRecording() {                         // initial frame (synchronous)
+  recCircleR = 24.0f;                           // start from the resting size
   drawRecordingScreen(0, 0);
   refresh();
 }
