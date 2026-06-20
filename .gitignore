@@ -1,0 +1,17 @@
+# ── Arduino / ESP32 build artifacts ──────────────────────────────────────────
+build/
+*.bin
+*.elf
+*.map
+*.hex
+
+# ── macOS / editor cruft ─────────────────────────────────────────────────────
+.DS_Store
+*.bak
+*.swp
+.vscode/
+
+# ── Safety: never commit real credentials ────────────────────────────────────
+# secrets.h ships with "...." placeholders and is safe to track. If you ever
+# paste REAL keys into it, uncomment the next line FIRST so git ignores it:
+# secrets.h
