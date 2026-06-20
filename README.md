@@ -272,4 +272,6 @@ All runtime config lives in the device's NVS (namespace `forrest`) and is set vi
 
 ## 📄 License
 
-The original Pala Note firmware is the work of its original author — please honour their license terms. Forrest Note's additions (the AI enrichment pipeline, the chunked-HTTP fix, the level-meter change, and this documentation) are offered under the same terms. Add the original project's license file here once confirmed.
+Forrest Note's additions (the AI enrichment pipeline, the chunked-HTTP fix, the level-meter change, and this documentation) are released under the **MIT License** — see [`LICENSE`](LICENSE).
+
+The firmware is built on the original **Pala Note** project; please also honour the original author's license terms for their portions of the code.
