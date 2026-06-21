@@ -44,6 +44,11 @@ Everything below is new or changed on top of that foundation:
 | 🐛 **Chunked-HTTP fix** | ➕ New | The HTTPS client now decodes `Transfer-Encoding: chunked` responses — which is what makes the OpenAI chat (enrichment) calls actually work. Without it, enrichment silently fails. |
 | 📊 **Snappier level meter** | 🔁 Changed | The live recording VU meter refresh rate was increased (~2 Hz → ~10 Hz), plus async/coalesced e-paper refresh for responsive UI. |
 | 🔐 **Zero secrets in code** | 🔁 Changed | Wi-Fi and API keys live on-device, not in the repo. |
+| 🏷️ **Title-named files** | 🔁 Changed | Each note is saved under its **one-word topic** (`Soho.md`) instead of `note_001.md`, so Obsidian shows a real title. Names are checked against the vault and auto-suffixed (`Soho 2.md`) on collision, so same-named notes never merge or re-link. |
+| ✍️ **One-word topic titles** | 🔁 Changed | The AI title is a single topic word (a clean filename + display name); the full context still lives in the summary and body. |
+| 📅 **Calendar events** | ➕ New | When a note describes a dated plan ("going to Soho House tomorrow", "dentist next Friday at 3"), the AI extracts it into `event_*` frontmatter (resolving "tomorrow" against the note's date). A small bridge can turn that into a real calendar event — see **Calendar sync**. |
+| 🧹 **Two-way delete** | ➕ New | Deleting a note on the device also removes its file from the GitHub vault and updates the tag index — via an offline-safe queue that drains on the next sync. |
+| 🗑️ **Erase All** | ➕ New | **Settings → Erase All** wipes every note from the SD card, with a choice of **Device only** (keep the vault) or **Device + GitHub** (also clear the vault). |
 
 ---
 
@@ -209,9 +214,10 @@ That's it — the device is now a personal AI note-taker.
 | **Scroll / next** | Tap **power** |
 | **Select / open** | Tap **record** |
 | **Back** | Hold **record** |
-| **Delete a note** | Hold **power** (while viewing a note) |
+| **Delete a note** | Hold **power** (while viewing a note) — also removes it from the vault on next sync |
+| **Erase all notes** | **Settings → Erase All** → choose **Device only** or **Device + GitHub** (pwr switches, record selects, hold record cancels) |
 
-After recording, the device transcribes and (when online) syncs to GitHub automatically. Each note becomes a Markdown file like `VoiceNotes/note_001.md`.
+After recording, the device transcribes and (when online) syncs to GitHub automatically. Each note becomes a Markdown file named after its topic, like `VoiceNotes/Soho.md`.
 
 ---
 
@@ -220,28 +226,35 @@ After recording, the device transcribes and (when online) syncs to GitHub automa
 On sync, for each new note the firmware:
 
 1. **Transcribes** the audio with **Whisper** (`whisper-1`).
-2. **Enriches** it with **`gpt-4o-mini`**, which returns: a short **title**, a one-sentence **summary**, a **cleaned** coherent rewrite of the body, and up to 6 **topics**.
-3. **Writes Markdown** and **pushes** it to your GitHub repo via the GitHub Contents API, plus updates a tag index page per tag.
+2. **Enriches** it with **`gpt-4o-mini`**, which returns: a one-word **topic title**, a one-sentence **summary**, a **cleaned** coherent rewrite of the body, up to 6 **topics**, and — when the note describes a dated plan — a calendar **event** (`{title, start, end, allDay}`, with relative dates like "tomorrow" resolved against the note's own date).
+3. **Writes Markdown** (named after the topic, e.g. `Soho.md`) and **pushes** it to your GitHub repo via the GitHub Contents API, plus updates a tag index page per tag.
 
 A generated note looks like:
 
 ```markdown
 ---
-title: "Valuing and auctioning three paintings"
-date: 2026-06-20T11:18:09Z
-id: 19
+title: "Soho"
+aliases: ["Soho"]
+date: 2026-06-22T18:10:00Z
+id: 11
+uid: Soho
 source: forrest-note
-tags: ["Idea"]
+tags: ["Note"]
+event_title: "Soho House"
+event_start: 2026-06-23T19:00
+event_end: 2026-06-23T21:00
+event_allday: false
 ---
 
-> [!summary] Plan to value three paintings ($2,000 each) and sell them at auction.
+> [!summary] Planning to meet friends at Soho House tomorrow evening.
 
-I have three paintings, each worth $2,000. They need to be valued on an online
-platform for art from the Middle East, then sold through an auction house...
+I'm heading to Soho House tomorrow at seven to meet a couple of friends...
 
 > [!quote]- Original transcript
-> I have three paintings by ... that are worth $2,000 each. They need to be valued...
+> So I'm going to Soho House tomorrow, like seven-ish, meeting up with...
 ```
+
+The `event_*` fields only appear when the note actually describes a plan with a date/time.
 
 ---
 
@@ -254,6 +267,26 @@ Because notes are plain Markdown with YAML frontmatter and `tags`, they work in 
 3. Install the **Obsidian Git** community plugin and enable **auto-pull on launch** + an **interval pull** (1 min) so new device notes appear automatically.
 
 The `[[topic]]` backlinks and per-tag index pages give you an auto-built map of content. (The Claude Code prompt in *Installation → Option A, step 3* sets all of this up for you.)
+
+---
+
+## 📅 Calendar sync
+
+Notes that mention a dated plan carry machine-readable event frontmatter (`event_title`, `event_start`, `event_end`, `event_allday`) — so *"I'm going to Soho House tomorrow at 7"* becomes:
+
+```yaml
+event_title: "Soho House"
+event_start: 2026-06-23T19:00
+event_end: 2026-06-23T21:00
+event_allday: false
+```
+
+Any automation that watches your vault can turn those into real calendar events. The firmware does the hard part (understanding the speech and resolving "tomorrow"); the bridge is just a few lines that read the frontmatter and create the event.
+
+- **Apple / iCloud Calendar (macOS):** a small Python + AppleScript script, triggered by a `launchd` agent that watches the notes folder, reads the `event_*` fields and creates the event in a chosen calendar (idempotent via a state file). iCloud has no cloud API, so this runs on your Mac.
+- **Google Calendar:** a GitHub Action on your notes repo can create events via the Google Calendar API on each push — fully cloud-side, no computer needed.
+
+> Using Claude Code? Ask it: *"Build me a bridge that watches my notes vault and creates an Apple Calendar event in my 'Event' calendar from each note's `event_*` frontmatter, installed as a launchd agent."*
 
 ---
 

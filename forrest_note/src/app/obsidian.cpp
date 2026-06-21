@@ -136,10 +136,16 @@ static String base64Encode(const String& in) {
   return String((char*)out.data());
 }
 
-// ── AI enrichment: title + summary + cleaned body + topics ──────────────────
-static bool enrichNote(const String& transcript, String& title, String& summary,
-                       String& cleaned, std::vector<String>& topics) {
+// A calendar event extracted from a note ("I'm going to Soho House tomorrow").
+// Empty title/start means the note didn't describe a dated plan.
+struct NoteEvent { String title, start, end; bool allDay = false; };
+
+// ── AI enrichment: title + summary + cleaned body + topics + calendar event ──
+static bool enrichNote(const String& transcript, const String& nowLocal,
+                       String& title, String& summary, String& cleaned,
+                       std::vector<String>& topics, NoteEvent& evt) {
   title = ""; summary = ""; cleaned = ""; topics.clear();
+  evt = NoteEvent();
   String key = cfg::openaiKey();
   if (key.length() == 0 || WiFi.status() != WL_CONNECTED) return false;
 
@@ -156,7 +162,7 @@ static bool enrichNote(const String& transcript, String& title, String& summary,
   sys["content"] =
     "You clean up and label a raw voice-note transcript. Reply with ONLY a JSON object, "
     "no prose, no code fences. Schema: {"
-    "\"title\": string (max 8 words), "
+    "\"title\": string (EXACTLY ONE word — the single main topic of the note, a noun in Title Case, no spaces), "
     "\"summary\": string (1 sentence overview), "
     "\"cleaned\": string (the note rewritten as clear, coherent, succinct markdown in the "
     "speaker's own voice — first person if the original is. Remove filler words, false "
@@ -165,10 +171,19 @@ static bool enrichNote(const String& transcript, String& title, String& summary,
     "short paragraphs, and markdown bullet points only when the note is naturally a list. "
     "No headings.), "
     "\"topics\": array of 0-6 strings (proper-noun topics or people mentioned, Title Case, "
-    "no # or brackets)}. If the transcript is empty or unintelligible return "
-    "{\"title\":\"\",\"summary\":\"\",\"cleaned\":\"\",\"topics\":[]}.";
+    "no # or brackets), "
+    "\"event\": object or null. Set it ONLY if the note describes a specific plan, "
+    "appointment or thing to attend with a date/time (e.g. 'going to Soho House tomorrow', "
+    "'dentist next Friday at 3'). Shape: {\"title\": short string, "
+    "\"start\": local datetime 'YYYY-MM-DDTHH:MM', \"end\": same format or empty, "
+    "\"allDay\": boolean}. Resolve relative dates ('today','tomorrow','next Friday') against "
+    "the current local date/time given below. If only a day is mentioned with no clock time, "
+    "set allDay true and use 00:00. If a start time is given but no end, leave end empty. "
+    "If there is no dated plan, set event to null}. If the transcript is empty or "
+    "unintelligible return {\"title\":\"\",\"summary\":\"\",\"cleaned\":\"\",\"topics\":[],\"event\":null}.";
   JsonObject usr = msgs.createNestedObject();
-  usr["role"] = "user"; usr["content"] = input;
+  usr["role"] = "user";
+  usr["content"] = "Current local date/time: " + nowLocal + "\n\nTranscript:\n" + input;
   String body; serializeJson(reqDoc, body);
 
   std::vector<String> headers = {
@@ -194,18 +209,32 @@ static bool enrichNote(const String& transcript, String& title, String& summary,
     String t = v.as<String>(); t.trim();
     if (t.length()) topics.push_back(t);
   }
+
+  JsonObject ev = inner["event"].as<JsonObject>();
+  if (!ev.isNull()) {
+    evt.title  = String((const char*)(ev["title"] | "")); evt.title.trim();
+    evt.start  = String((const char*)(ev["start"] | "")); evt.start.trim();
+    evt.end    = String((const char*)(ev["end"]   | "")); evt.end.trim();
+    evt.allDay = ev["allDay"] | false;
+  }
   return true;
 }
 
 // ── Markdown ────────────────────────────────────────────────────────────────
-static String buildNoteMarkdown(int num, const String& transcript, const String& cleaned,
+static String buildNoteMarkdown(int num, const String& uid,
+                                const String& transcript, const String& cleaned,
                                 const String& title, const String& summary,
                                 const std::vector<String>& topics,
-                                const String& userTag, const String& createdUtc) {
+                                const String& userTag, const String& createdUtc,
+                                const NoteEvent& evt) {
   String md = "---\n";
   md += "title: \"" + yamlEsc(title) + "\"\n";
+  // Alias keeps name-based search/[[autocomplete]] working while the file's real
+  // (unique) name stays the date-time uid, so same-titled notes never collide.
+  if (title.length()) md += "aliases: [\"" + yamlEsc(title) + "\"]\n";
   if (createdUtc.length()) md += "date: " + createdUtc + "\n";
   md += "id: " + String(num) + "\n";
+  md += "uid: " + uid + "\n";
   md += "source: forrest-note\n";
 
   // frontmatter tags = user tag + topics (Obsidian tags can't contain spaces)
@@ -218,7 +247,17 @@ static String buildNoteMarkdown(int num, const String& transcript, const String&
     if (list.length()) list += ", ";
     list += "\"" + yamlEsc(st) + "\"";
   }
-  md += "tags: [" + list + "]\n---\n\n";
+  md += "tags: [" + list + "]\n";
+
+  // Calendar event fields (read by the Mac-side bridge that adds them to Apple
+  // Calendar). Only emitted when the AI extracted a dated plan from the note.
+  if (evt.title.length() && evt.start.length()) {
+    md += "event_title: \"" + yamlEsc(evt.title) + "\"\n";
+    md += "event_start: " + evt.start + "\n";
+    if (evt.end.length()) md += "event_end: " + evt.end + "\n";
+    md += "event_allday: " + String(evt.allDay ? "true" : "false") + "\n";
+  }
+  md += "---\n\n";
 
   if (summary.length()) md += "> [!summary] " + summary + "\n\n";
 
@@ -310,22 +349,143 @@ static GhResult githubPutFile(const String& path, const String& content, const S
   return GH_OTHER;
 }
 
+static GhResult githubDeleteFile(const String& path, const String& msg) {
+  if (WiFi.status() != WL_CONNECTED) return GH_NET;
+
+  String sha;
+  int gs = githubGetSha(path, sha);
+  if (gs == -1)  return GH_NET;
+  if (gs == 401) return GH_AUTH;
+  if (gs == 403) return GH_RATELIMIT;
+  if (gs == 404) return GH_OK;                   // already gone -> success
+  if (gs != 200 || sha.length() == 0) return GH_OTHER;
+
+  DynamicJsonDocument doc(sha.length() + 512);
+  doc["message"] = msg;
+  doc["sha"]     = sha;
+  doc["branch"]  = cfg::githubBranch();
+  String body; serializeJson(doc, body);
+
+  String url = "/repos/" + cfg::githubRepo() + "/contents/" + urlEncodePath(path);
+  std::vector<String> headers = {
+    "Authorization: Bearer " + cfg::githubToken(),
+    "User-Agent: ForrestNote",
+    "Accept: application/vnd.github+json",
+    "Content-Type: application/json"
+  };
+  int status; String resp;
+  if (!httpsSend("api.github.com", "DELETE", url, headers, body, status, resp)) return GH_NET;
+  if (status == 200) return GH_OK;
+  if (status == 401) return GH_AUTH;
+  if (status == 403) return (resp.indexOf("rate limit") >= 0) ? GH_RATELIMIT : GH_AUTH;
+  if (status == 404 || status == 422) return GH_OK;   // gone / sha moved on -> treat as done
+  Serial.printf("[gh] DELETE %s -> %d\n", path.c_str(), status);
+  return GH_OTHER;
+}
+
+// Choose the vault filename stem for a fresh note: the (one-word) title, with
+// " 2", " 3"… appended if that name is already taken in the vault. Probes the
+// GitHub Contents API per candidate. If we can't verify (network/auth error) or
+// hit too many collisions, fall back to the note's unique date-time id so we can
+// never clobber a different note's file.
+static String pickVaultStem(int num, const String& title) {
+  String base = tagSlug(title);
+  if (!base.length()) base = "Note";
+  String dir = cfg::githubDir();
+  for (int n = 1; n <= 50; n++) {
+    String stem = (n == 1) ? base : (base + " " + String(n));
+    String sha;
+    int gs = githubGetSha(dir + "/" + stem + ".md", sha);
+    if (gs == 404) return stem;            // name is free -> use it
+    if (gs != 200) return noteUid(num);    // can't verify -> unique fallback
+    // gs == 200: taken by another note, try the next suffix
+  }
+  return noteUid(num);                      // pathological collision count -> unique
+}
+
 static GhResult buildAndPushTagMOC(const char* tag) {
   String md = "---\ntitle: \"" + yamlEsc(String(tag)) + "\"\ntype: MOC\n---\n\n# " +
               String(tag) + "\n\n";
   for (int i = 0; i < (int)noteIndex.size(); i++) {
     if (noteIndex[i].hasText && strcmp(noteIndex[i].tag, tag) == 0) {
-      char nm[24]; snprintf(nm, sizeof(nm), "note_%03d", noteIndex[i].num);
-      md += "- [[" + String(nm) + "]]\n";
+      String uid = noteUid(noteIndex[i].num);
+      String t   = linkSafe(noteTitle(noteIndex[i].num));   // strip [ ] | ^ etc from display
+      // Word-named files already read as the title, so skip the redundant alias.
+      md += (t.length() && t != uid) ? ("- [[" + uid + "|" + t + "]]\n")
+                                     : ("- [[" + uid + "]]\n");
     }
   }
   String path = cfg::githubDir() + "/Tags/" + tagSlug(String(tag)) + ".md";
   return githubPutFile(path, md, "Update tag MOC: " + String(tag));
 }
 
+// ── Vault deletion queue ────────────────────────────────────────────────────
+// Drains /notes/tombs.csv: each "uid,tag" line is a note that was removed on the
+// device and must be removed from the vault too. We delete the .md, then rebuild
+// the MOCs of affected tags (now excluding the gone note). Lines we couldn't
+// process (offline / rate-limited) stay queued for the next call.
+void obsidianFlushDeletes() {
+  if (!cfg::hasGithub() || WiFi.status() != WL_CONNECTED) return;
+  if (!SD_MMC.exists(TOMBS_FILE)) return;
+
+  std::vector<String> uids, tags;
+  File f = SD_MMC.open(TOMBS_FILE);
+  if (!f) return;
+  while (f.available()) {
+    String ln = f.readStringUntil('\n'); ln.trim();
+    if (!ln.length()) continue;
+    int c = ln.indexOf(',');
+    if (c < 0) continue;
+    uids.push_back(ln.substring(0, c));
+    tags.push_back(ln.substring(c + 1));
+  }
+  f.close();
+  if (uids.empty()) { SD_MMC.remove(TOMBS_FILE); return; }
+
+  std::vector<bool> done(uids.size(), false);
+  std::vector<String> affectedTags;
+  for (size_t i = 0; i < uids.size(); i++) {
+    if (WiFi.status() != WL_CONNECTED) break;
+    String path = cfg::githubDir() + "/" + uids[i] + ".md";
+    GhResult r = githubDeleteFile(path, "Delete " + uids[i] + ".md");
+    if (r == GH_OK) {
+      done[i] = true;
+      bool seen = false;
+      for (size_t j = 0; j < affectedTags.size(); j++)
+        if (affectedTags[j] == tags[i]) { seen = true; break; }
+      if (!seen && tags[i].length()) affectedTags.push_back(tags[i]);
+    } else if (r == GH_AUTH) {
+      break;                                     // bad creds -> stop, retry later
+    }
+    // GH_NET / GH_RATELIMIT / GH_OTHER: leave queued, retry next flush
+  }
+
+  for (size_t i = 0; i < affectedTags.size(); i++) {
+    if (WiFi.status() != WL_CONNECTED) break;
+    buildAndPushTagMOC(affectedTags[i].c_str());
+  }
+
+  // Rewrite the queue keeping only the unprocessed entries.
+  bool anyLeft = false;
+  for (size_t i = 0; i < uids.size(); i++) if (!done[i]) { anyLeft = true; break; }
+  if (!anyLeft) { SD_MMC.remove(TOMBS_FILE); return; }
+
+  const char* tmp = "/notes/tombs.tmp";
+  if (SD_MMC.exists(tmp)) SD_MMC.remove(tmp);
+  File w = SD_MMC.open(tmp, FILE_WRITE);
+  if (!w) return;
+  for (size_t i = 0; i < uids.size(); i++)
+    if (!done[i]) { w.print(uids[i]); w.print(","); w.println(tags[i]); }
+  w.close();
+  if (SD_MMC.exists(TOMBS_FILE)) SD_MMC.remove(TOMBS_FILE);
+  SD_MMC.rename(tmp, TOMBS_FILE);
+}
+
 // ── Public entry point ──────────────────────────────────────────────────────
 void obsidianSyncAll() {
   if (!cfg::hasGithub() || WiFi.status() != WL_CONNECTED) return;
+
+  obsidianFlushDeletes();   // drain any queued vault deletes first
 
   int pending = 0;
   for (int i = 0; i < (int)noteIndex.size(); i++)
@@ -347,31 +507,38 @@ void obsidianSyncAll() {
     String transcript = "";
     if (tf) { while (tf.available() && transcript.length() < 131072) transcript += (char)tf.read(); tf.close(); }
 
-    String title, summary, cleaned; std::vector<String> topics;
+    String title, summary, cleaned; std::vector<String> topics; NoteEvent evt;
     bool aiOn = cfg::githubAiEnrich(), haveKey = cfg::hasOpenAiKey();
     if (aiOn && haveKey) {
-      bool ok = enrichNote(transcript, title, summary, cleaned, topics);
+      bool ok = enrichNote(transcript, noteCreatedDeviceLabel(num),
+                           title, summary, cleaned, topics, evt);
       Serial.printf("[sync] note %d enrich=%d title='%s' sum=%d clean=%d\n",
                     num, ok, title.c_str(), summary.length(), cleaned.length());
     } else {
       Serial.printf("[sync] note %d enrich SKIPPED (aiOn=%d haveKey=%d)\n", num, aiOn, haveKey);
     }
     if (title.length() == 0) {
-      title = firstWords(transcript, 8);
-      if (title.length() == 0) title = "Voice note " + String(num);
+      title = firstWords(transcript, 1);
+      if (title.length() == 0) title = "Note";
     }
+    title = firstWords(title, 1);   // enforce a single-word topic title
 
-    String md = buildNoteMarkdown(num, transcript, cleaned, title, summary, topics, userTag, createdUtc);
-    char mp[16]; snprintf(mp, sizeof(mp), "note_%03d.md", num);
-    String path = cfg::githubDir() + "/" + String(mp);
+    // Vault filename = the note's one-word title (e.g. Soho.md), with a numeric
+    // suffix if that name is already taken (Soho 2.md). A re-push keeps whatever
+    // filename it already got. Frozen into .meta on success for the MOC/delete paths.
+    String stored = readNoteMetaValue(num, "uid");
+    String slug = stored.length() ? stored : pickVaultStem(num, title);
+    String md = buildNoteMarkdown(num, slug, transcript, cleaned, title, summary, topics, userTag, createdUtc, evt);
+    String fname = slug + ".md";
+    String path = cfg::githubDir() + "/" + fname;
 
     GhResult r = GH_NET;
     for (int attempt = 0; attempt < 3 && WiFi.status() == WL_CONNECTED; attempt++) {
-      r = githubPutFile(path, md, "Add " + String(mp));
+      r = githubPutFile(path, md, "Add " + fname);
       if (r == GH_OK || r == GH_AUTH) break;
       delay(1500);
     }
-    if (r == GH_OK)            { markNoteObsidianPushed(num, true); done++; pushedAny = true; }
+    if (r == GH_OK)            { freezeVaultMeta(num, slug, title); markNoteObsidianPushed(num, true); done++; pushedAny = true; }
     else if (r == GH_AUTH)     { showError("GIT AUTH"); delay(1600); return; }
     else if (r == GH_RATELIMIT){ Serial.println("[gh] rate limited; stopping"); break; }
     // GH_NET / GH_OTHER: leave pending, try the next note

@@ -56,6 +56,8 @@ void showSettings(int cursor);
 void showDeviceInfo();
 void showResetConfirm();
 void showResetDone();
+void showDeleteAllConfirm(int count, int cursor);
+void showDeleteAllDone(bool alsoVault);
 void showObsidianSync(int done, int total);
 
 void redrawCurrentScreen();   // repaint the current state's screen

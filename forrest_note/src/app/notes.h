@@ -6,6 +6,7 @@ void   saveIndex();
 void   addToIndex(int num, const char* tag, bool hasText);
 void   updateIndexHasText(int num);
 void   deleteNote(int num);
+int    deleteAllNotes(bool alsoVault = false);   // wipe all notes off SD; alsoVault also queues vault deletes. returns count
 int    nextNoteNumber();
 void   saveTag(int num, const char* tag);
 
@@ -22,6 +23,13 @@ String readNoteMetaValue(int num, const char* key);
 void   writeNoteMeta(int num, const char* tag);
 bool   noteObsidianPushed(int num);
 void   markNoteObsidianPushed(int num, bool pushed);
+
+// Vault identity: each note is pushed under a unique, never-reused filename stem
+// keyed on its creation date+time, so two notes can share a title yet link
+// separately and a reused note number can never re-link to a deleted note.
+String noteUid(int num);                                            // vault filename stem (no .md)
+String noteTitle(int num);                                          // AI title frozen at push (for [[uid|title]] display)
+void   freezeVaultMeta(int num, const String& uid, const String& title);
 
 String noteCreatedUtc(int num);
 String utcToLocalDeviceLabel(const String& utcIso);

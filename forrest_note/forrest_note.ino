@@ -50,7 +50,7 @@ extern "C" {
 // ─── Content arrays ───────────────────────────────────────────────────────
 const char* DEFAULT_TAGS[]    = { "Note", "Work", "Idea", "Buy", "Private" };
 const char* MENU_ITEMS[]     = { "Notes", "Tags", "Sync", "Settings" };
-const char* SETTINGS_ITEMS[] = { "Sounds", "Transfer", "Device", "Reset" };
+const char* SETTINGS_ITEMS[] = { "Sounds", "Transfer", "Device", "Erase All", "Reset" };
 
 // ─── Global variable definitions ─────────────────────────────────────────
 board_power_bsp_t      board(EPD_PWR_PIN, Audio_PWR_PIN, VBAT_PWR_PIN);
@@ -63,6 +63,7 @@ int      listCursor     = 0;
 int      tagCursor      = 2;
 int      menuCursor     = 0;
 int      settingsCursor = 0;
+int      eraseAllCursor = 0;   // 0 = device only, 1 = device + GitHub
 int      activeFilter   = -1;
 int      lastRecNum     = -1;
 
@@ -512,6 +513,10 @@ void loop() {
       } else if (settingsCursor == 2) {
         state = STATE_DEVICE_INFO;
         showDeviceInfo();
+      } else if (settingsCursor == 3) {
+        eraseAllCursor = 0;
+        state = STATE_DELETE_ALL_CONFIRM;
+        showDeleteAllConfirm((int)noteIndex.size(), eraseAllCursor);
       } else {
         state = STATE_RESET_CONFIRM;
         showResetConfirm();
@@ -535,6 +540,34 @@ void loop() {
       delay(1400);
       ESP.restart();                // reboot unprovisioned -> SoftAP setup available again
     } else if (pwr == EV_SINGLE || rec == EV_LONG) {
+      soundBack();
+      state = STATE_SETTINGS;
+      showSettings(settingsCursor);
+    }
+  }
+
+  // ERASE ALL CONFIRM ───────────────────────────────────────────────────
+  // Two-option pick: device only, or device + GitHub. pwr switches, rec selects,
+  // hold rec cancels (standard back gesture).
+  else if (state == STATE_DELETE_ALL_CONFIRM) {
+    ButtonEvent rec = readButtonEvent(BTN_REC);
+    ButtonEvent pwr = readButtonEvent(BTN_PWR);
+
+    if (pwr == EV_SINGLE) {
+      soundNext();
+      eraseAllCursor = (eraseAllCursor + 1) % 2;
+      showDeleteAllConfirm((int)noteIndex.size(), eraseAllCursor);
+    } else if (rec == EV_SINGLE) {
+      bool alsoVault = (eraseAllCursor == 1);
+      deleteAllNotes(alsoVault);    // alsoVault queues GitHub deletes (drain next sync)
+      activeFilter = -1; listCursor = 0;
+      soundDelete();
+      showDeleteAllDone(alsoVault);
+      delay(1300);
+      menuCursor = 0;
+      state = STATE_MENU;
+      showMenu(menuCursor);
+    } else if (rec == EV_LONG) {
       soundBack();
       state = STATE_SETTINGS;
       showSettings(settingsCursor);

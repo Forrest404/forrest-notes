@@ -64,6 +64,7 @@
 #define NOTES_DIR  "/notes"
 #define INDEX_FILE "/notes/index.csv"
 #define TAG_FILE   "/notes/tags.txt"
+#define TOMBS_FILE "/notes/tombs.csv"   // pending vault deletes (uid,tag per line)
 #define MAX_TAGS   20
 
 /* UI timing */

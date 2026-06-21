@@ -3,6 +3,7 @@
 #include "../../globals.h"
 #include "../../types.h"
 #include "notes.h"
+#include "obsidian.h"
 #include "rtc.h"
 #include "draw.h"
 #include "SD_MMC.h"
@@ -63,7 +64,23 @@ void updateIndexHasText(int num) {
   writeNoteMeta(num, foundTag);
 }
 
+// Queue a vault delete for a note that was pushed to Obsidian. Captured from
+// .meta BEFORE the note's files are removed; drained by obsidianFlushDeletes().
+static void appendTombstone(int num) {
+  String uid = noteUid(num);
+  String tag = "";
+  for (int i = 0; i < (int)noteIndex.size(); i++)
+    if (noteIndex[i].num == num) { tag = String(noteIndex[i].tag); break; }
+  if (!tag.length()) tag = readNoteMetaValue(num, "tag");
+  File f = SD_MMC.open(TOMBS_FILE, FILE_APPEND);
+  if (!f) return;
+  f.print(uid); f.print(","); f.println(tag);
+  f.close();
+}
+
 void deleteNote(int num) {
+  if (noteObsidianPushed(num)) appendTombstone(num);   // schedule vault cleanup
+
   const char* exts[] = {"wav", "txt", "meta", nullptr};
   char path[64];
   for (int e = 0; exts[e]; e++) {
@@ -77,6 +94,42 @@ void deleteNote(int num) {
     }
   }
   saveIndex();
+
+  obsidianFlushDeletes();   // self-guards on Wi-Fi/GitHub; rebuilds the MOC sans this note
+}
+
+// Wipe every note off the SD card: all note_* files (wav/txt/meta) plus the
+// index. Tag definitions (tags.txt) and any pending vault-delete queue (tombs.csv)
+// are left intact. Local-only — notes already synced to Obsidian are not touched.
+int deleteAllNotes(bool alsoVault) {
+  // When erasing everywhere, queue a vault delete for each pushed note BEFORE we
+  // wipe the index/meta. obsidianFlushDeletes() (next sync) removes them from
+  // GitHub and empties the MOCs — offline-safe, same path as single-note delete.
+  if (alsoVault) {
+    for (int i = 0; i < (int)noteIndex.size(); i++)
+      if (noteObsidianPushed(noteIndex[i].num)) appendTombstone(noteIndex[i].num);
+  }
+
+  int erased = (int)noteIndex.size();
+
+  std::vector<String> toRemove;
+  File dir = SD_MMC.open(NOTES_DIR);
+  if (dir && dir.isDirectory()) {
+    for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
+      String name = e.name();
+      e.close();
+      int slash = name.lastIndexOf('/');
+      String base = slash >= 0 ? name.substring(slash + 1) : name;
+      if (base.startsWith("note_"))
+        toRemove.push_back(String(NOTES_DIR) + "/" + base);
+    }
+    dir.close();
+  }
+  for (size_t i = 0; i < toRemove.size(); i++) SD_MMC.remove(toRemove[i].c_str());
+
+  if (SD_MMC.exists(INDEX_FILE)) SD_MMC.remove(INDEX_FILE);
+  noteIndex.clear();
+  return erased;
 }
 
 int nextNoteNumber() {
@@ -221,22 +274,32 @@ String readNoteMetaValue(int num, const char* key) {
   return "";
 }
 
-void writeNoteMeta(int num, const char* tag) {
-  String path = noteMetaPath(num);
-  String existingCreated = readNoteMetaValue(num, "created_utc");
-  String created = existingCreated.length() ? existingCreated : currentUtcIso();
-  String existingObs = readNoteMetaValue(num, "obsidian");   // preserve push state
-  File f = SD_MMC.open(path.c_str(), FILE_WRITE);
+// Single writer for the whole .meta file. ESP32 FILE_WRITE truncates, so every
+// caller reads the fields it isn't changing and passes them straight back.
+static void writeMetaAll(int num, const String& created, const String& tag,
+                         const String& synced, const String& obsidian,
+                         const String& title, const String& uid) {
+  File f = SD_MMC.open(noteMetaPath(num).c_str(), FILE_WRITE);
   if (!f) return;
   f.print("created_utc="); f.println(created);
-  f.print("tag="); f.println(tag ? tag : "");
-  f.print("synced=");
+  f.print("tag=");         f.println(tag);
+  f.print("synced=");      f.println(synced.length() ? synced : "0");
+  f.print("obsidian=");    f.println(obsidian == "1" ? "1" : "0");
+  f.print("title=");       f.println(title);
+  f.print("uid=");         f.println(uid);
+  f.close();
+}
+
+void writeNoteMeta(int num, const char* tag) {
+  String created = readNoteMetaValue(num, "created_utc");
+  if (!created.length()) created = currentUtcIso();
+  String obs   = readNoteMetaValue(num, "obsidian");   // preserve push state
+  String title = readNoteMetaValue(num, "title");      // preserve frozen vault id/title
+  String uid   = readNoteMetaValue(num, "uid");
   bool hasText = false;
   for (int i = 0; i < (int)noteIndex.size(); i++)
     if (noteIndex[i].num == num) { hasText = noteIndex[i].hasText; break; }
-  f.println(hasText ? "1" : "0");
-  f.print("obsidian="); f.println(existingObs == "1" ? "1" : "0");
-  f.close();
+  writeMetaAll(num, created, tag ? tag : "", hasText ? "1" : "0", obs, title, uid);
 }
 
 // ── Obsidian/GitHub push state (stored in .meta) ────────────────────────────
@@ -249,13 +312,43 @@ void markNoteObsidianPushed(int num, bool pushed) {
   String created = readNoteMetaValue(num, "created_utc");
   String tag     = readNoteMetaValue(num, "tag");
   String synced  = readNoteMetaValue(num, "synced");
-  File f = SD_MMC.open(noteMetaPath(num).c_str(), FILE_WRITE);
-  if (!f) return;
-  f.print("created_utc="); f.println(created);
-  f.print("tag=");         f.println(tag);
-  f.print("synced=");      f.println(synced.length() ? synced : "0");
-  f.print("obsidian=");    f.println(pushed ? "1" : "0");
-  f.close();
+  String title   = readNoteMetaValue(num, "title");
+  String uid     = readNoteMetaValue(num, "uid");
+  writeMetaAll(num, created, tag, synced, pushed ? "1" : "0", title, uid);
+}
+
+// Freeze the vault filename stem + display title at first push. Both the MOC
+// builder and the delete path read these back so they always target the exact
+// same file — even if the AI rewords the title or the time formatting changes.
+void freezeVaultMeta(int num, const String& uid, const String& title) {
+  String created = readNoteMetaValue(num, "created_utc");
+  String tag     = readNoteMetaValue(num, "tag");
+  String synced  = readNoteMetaValue(num, "synced");
+  String obs     = readNoteMetaValue(num, "obsidian");
+  writeMetaAll(num, created, tag, synced, obs, title, uid);
+}
+
+String noteTitle(int num) { return readNoteMetaValue(num, "title"); }
+
+// Unique, never-reused vault filename stem for a note. Resolution order keeps it
+// stable and backward-compatible (see notes.h):
+//   1. a stored uid (frozen at push)               -> use it verbatim
+//   2. already pushed but no uid (legacy scheme)    -> note_%03d (real old file)
+//   3. fresh note                                   -> note_<YYYYMMDD-HHMMSS>
+String noteUid(int num) {
+  String stored = readNoteMetaValue(num, "uid");
+  if (stored.length()) return stored;
+
+  char legacy[16]; snprintf(legacy, sizeof(legacy), "note_%03d", num);
+  if (readNoteMetaValue(num, "obsidian") == "1") return String(legacy);
+
+  String iso = noteCreatedUtc(num);                 // 2026-06-21T14:38:34Z
+  if (iso.length() >= 19) {
+    String d = iso.substring(0, 4) + iso.substring(5, 7) + iso.substring(8, 10);
+    String t = iso.substring(11, 13) + iso.substring(14, 16) + iso.substring(17, 19);
+    return "note_" + d + "-" + t;                   // note_20260621-143834
+  }
+  return String(legacy);                            // RTC time not set yet
 }
 
 // ─── Time helpers ─────────────────────────────────────────────────────────

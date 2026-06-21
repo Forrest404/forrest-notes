@@ -574,7 +574,7 @@ void showSettings(int cursor) {
   clearWhite();
   drawStr(16, 14, "settings", 1, BLACK);
   hline(16, 32, W-32, BLACK);
-  const int y0 = 40, step = 38, boxH = 34;
+  const int y0 = 38, step = 32, boxH = 28;
   for (int row = 0; row < SETTINGS_COUNT; row++) {
     bool active = row == cursor;
     int y = y0 + row * step;
@@ -588,6 +588,8 @@ void showSettings(int cursor) {
       drawStr(28, y + 8, "transfer", 1, col);
     } else if (row == 2) {
       drawStr(28, y + 8, "device", 1, col);
+    } else if (row == 3) {
+      drawStr(28, y + 8, "erase all", 1, col);
     } else {
       drawStr(28, y + 8, "reset", 1, col);
     }
@@ -626,6 +628,39 @@ void showResetDone() {
   drawCheckSmall(100, 70, BLACK);
   drawStrC(100, 110, "reset done", 1, BLACK);
   drawStrC(100, 132, "restarting", 1, BLACK);
+  forceFullRefresh();
+}
+
+void showDeleteAllConfirm(int count, int cursor) {
+  clearWhite();
+  fillRect(0, 0, W, 26, BLACK);
+  drawStrC(W/2, 9, "ERASE ALL", 1, WHITE);
+  char label[20]; snprintf(label, sizeof(label), "%d notes", count);
+  drawStrC(W/2, 40, label, 2, BLACK);
+
+  const char* opts[2] = { "Device only", "Device + GitHub" };
+  const int y0 = 76, step = 34, boxH = 28;
+  for (int i = 0; i < 2; i++) {
+    bool active = (i == cursor);
+    int y = y0 + i * step;
+    if (active) fillRoundRect(20, y, 160, boxH, 8, BLACK);
+    else        strokeRoundRect(20, y, 160, boxH, 8, 1, BLACK);
+    drawStrC(W/2, y + 8, opts[i], 1, active ? WHITE : BLACK);
+  }
+
+  hline(0, 179, W, BLACK);
+  fillRect(0, 180, W, 20, WHITE);
+  drawStr(8, 186, "select", 1, BLACK);
+  const char* r = "hold=cancel";
+  drawStr(W - 8 - textW(r, 1), 186, r, 1, BLACK);
+  refresh();
+}
+
+void showDeleteAllDone(bool alsoVault) {
+  clearWhite();
+  drawCheckSmall(100, 70, BLACK);
+  drawStrC(100, 110, "all erased", 1, BLACK);
+  if (alsoVault) drawStrC(100, 132, "github on sync", 1, BLACK);
   forceFullRefresh();
 }
 
